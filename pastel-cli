@@ -1,0 +1,159 @@
+#!/usr/bin/env perl
+
+use strict;
+use warnings;
+use 5.010_000;
+use utf8;
+
+use Getopt::Long qw(:config posix_default no_ignore_case no_ignore_case_always);
+use Pod::Usage;
+
+use Socket;
+STDOUT->autoflush(1);
+STDERR->autoflush(1);
+use Furl;
+use Data::Dumper;
+
+my $PROG = substr($0, rindex($0, '/') + 1);
+my $Debug = 0;
+my $PASTEL_BASE_URL = undef; # http://your.pastel.name # specify to omit base_url argument for post command
+my $PASTEL_IP = undef; # specify ipaddress when hostname cannot be resolved
+
+MAIN: {
+    my %arg;
+    GetOptions(
+        \%arg,
+        'debug|d+' => \$Debug,
+        'help|h|?' => sub { pod2usage(-verbose=>1) },
+    ) or pod2usage();
+
+    $ENV{CD_DEBUG} = 1 if $Debug;
+
+    my $url = shift @ARGV || $PASTEL_BASE_URL;
+
+    if ($url =~ /memos/) {
+        get_and_print($url);
+    }
+    else {
+        post($url);
+    }
+
+    exit 0;
+}
+
+sub get_and_print {
+    my $url = shift;
+    my $res = _furl()->request(
+        method => 'GET',
+        url    => $url,
+    );
+    print Dumper $res if ($Debug);
+    if ($res->status == 200) {
+        my $content = $res->content;
+        if ($content =~ /<textarea[^>]*>([^<]+)/m) {
+            print $1;
+        } else {
+            print STDERR "Error: Failed to parse the content of $url\n";
+            exit 1;
+        }
+    } else {
+        print STDERR "Error: Failed to get $url\n";
+        exit 1;
+    }
+}
+
+sub post {
+    my ($base_url) = @_;
+
+    my $body = '';
+    while (my $line = <STDIN>) { $body .= $line; }
+
+    my $res = _furl()->request(
+        method  => 'POST',
+        url     => "$base_url/create",
+        content => [ body => $body ],
+    );
+    print Dumper $res if ($Debug);
+    if ($res->status == 302) {
+        print $res->headers->{'location'}[0] . "\n";
+    } else {
+        print STDERR "Error: Failed to post\n";
+        exit 1;
+    }
+}
+
+sub _furl {
+    my %opts = (
+        agent   => 'pastel-cli/1.0',
+        timeout => 10,
+        max_redirects => 0,
+    );
+    if (defined($PASTEL_IP)) {
+        # https://github.com/tokuhirom/Furl/blob/8e3756d50c094d48c63302e01be77f1b9250add3/lib/Furl/HTTP.pm#L1292-L1310
+        # Need to use get_address trick to replace Host header.
+        $opts{get_address} = sub {
+            my ($host, $port, $timeout) = @_;
+            pack_sockaddr_in(80, inet_aton($PASTEL_IP));
+        };
+    }
+    return Furl->new(%opts);
+}
+
+__END__
+
+=encoding utf8
+
+=head1 NAME
+
+B<pastel-cli> - pastel client
+
+=head1 SYNOPSIS
+
+  $ pastel-cli [OPTIONS] [URL]
+
+  Options:
+    --help|-h        help message
+    --debug|-d       debug mode
+
+  1) Post to pastel
+
+  $ cat /path/to/file | pastel-cli http://your.pastel.name
+  #=> http://your.pastel.name/memos/e5c4db3459a13d0b07da7435b0956bc304d2b82d
+  
+  2) Get from pastel
+
+  $ pastel-cli http://your.pastel.name/memos/e5c4db3459a13d0b07da7435b0956bc304d2b82d
+  #=> contents
+  
+=head1 DESCRIPTION
+
+pastel cli
+
+=head1 OPTIONS
+
+=over 4
+
+=item B<-h>, B<--help>
+
+help
+
+=item B<-d>, B<--debug>
+
+increase debug level.
+-d -d more verbosely.
+
+=back
+
+=cut
+
+# for Emacsen
+# Local Variables:
+# mode: cperl
+# cperl-indent-level: 4
+# cperl-close-paren-offset: -4
+# cperl-indent-parens-as-block: t
+# indent-tabs-mode: nil
+# coding: utf-8
+# End:
+
+# vi: set ts=4 sw=4 sts=0 et ft=perl fenc=utf-8 ff=unix :
